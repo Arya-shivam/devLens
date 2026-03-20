@@ -12,7 +12,7 @@ DEFAULT_CONFIG = {
         "default_limit": 8
     },
     "ai": {
-        "openrouter_api_key": "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"
+        "openrouter_api_key": ""
     }
 }
 

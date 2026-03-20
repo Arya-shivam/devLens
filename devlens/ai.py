@@ -12,9 +12,7 @@ class QueryClassification(BaseModel):
     intent: str
 
 
-# ---------------------------------------------------------------------------
 # Webpage scraping
-# ---------------------------------------------------------------------------
 
 async def _fetch_page(client: httpx.AsyncClient, url: str) -> str:
     """Fetch a single URL and return its cleaned text content (max ~4000 chars)."""
@@ -23,15 +21,11 @@ async def _fetch_page(client: httpx.AsyncClient, url: str) -> str:
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
 
-        # Remove noise elements
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe"]):
             tag.decompose()
-
-        # Prefer <article> or <main> if present
         body = soup.find("article") or soup.find("main") or soup.find("body")
         text = body.get_text(separator="\n", strip=True) if body else ""
 
-        # Trim to keep context window reasonable
         return text[:4000]
     except Exception:
         return ""
@@ -56,9 +50,9 @@ async def read_webpages(urls: List[str], max_pages: int = 3) -> List[Dict[str, s
     return pages
 
 
-# ---------------------------------------------------------------------------
+
 # Query classification
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 
 async def classify_query(query: str) -> str:
     """
@@ -99,9 +93,7 @@ async def classify_query(query: str) -> str:
     return "other"
 
 
-# ---------------------------------------------------------------------------
 # Answer generation  (reads pages, synthesizes a final answer)
-# ---------------------------------------------------------------------------
 
 async def generate_answer(query: str, results: List[Dict[str, Any]], intent: str = "other") -> str:
     """
@@ -113,12 +105,11 @@ async def generate_answer(query: str, results: List[Dict[str, Any]], intent: str
     if not key:
         return "OpenRouter API key not configured. Set OPENROUTER_API_KEY environment variable or ~/.devlens/config.toml."
 
-    # --- Step 1: read the actual webpages ---------------------------------
     urls = [r.get("url", "") for r in results if r.get("url")]
     pages = await read_webpages(urls, max_pages=3)
 
     if not pages:
-        # Fallback to snippet-only mode
+       
         snippets = "\n\n".join(
             f"Source: {r.get('title','')}\n{r.get('content','')}" for r in results[:5]
         )
@@ -129,7 +120,6 @@ async def generate_answer(query: str, results: List[Dict[str, Any]], intent: str
             parts.append(f"--- Source: {p['url']} ---\n{p['text']}")
         context_block = "\n\n".join(parts)
 
-    # --- Step 2: build the prompt -----------------------------------------
     system_prompt = (
         "You are devLens, a developer-focused search assistant. "
         "You have been given the full text of several authoritative web pages that were retrieved for the user's query. "
@@ -146,7 +136,6 @@ async def generate_answer(query: str, results: List[Dict[str, Any]], intent: str
         "Based on the above sources, provide the best possible answer to the query."
     )
 
-    # --- Step 3: call OpenRouter ------------------------------------------
     try:
         async with OpenRouter(api_key=key) as client:
             response = await client.chat.send_async(
