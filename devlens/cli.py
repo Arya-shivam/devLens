@@ -18,8 +18,12 @@ from .render import render_results, render_prompt
 from .interactive import run_interactive
 from .browser import open_url
 
-app = typer.Typer(help="devLens - Privacy-first search engine for developers", no_args_is_help=True)
+app = typer.Typer(
+    help="devLens - Privacy-first search engine for developers",
+    no_args_is_help=True,
+)
 console = Console()
+
 
 def get_version():
     try:
@@ -30,7 +34,7 @@ def get_version():
 
 async def _do_search(query: str, web_mode: bool = False, source: str = "",
                      lang: str = "") -> tuple:
-    """Run search + rank, return (results, elapsed)."""
+    """Run search + rank, return (results, elapsed, intent)."""
     client = SearchClient()
     start = time.monotonic()
     raw_results = await client.search(query=query)
@@ -49,28 +53,32 @@ async def _do_search(query: str, web_mode: bool = False, source: str = "",
     return results, elapsed, intent
 
 
-@app.command()
-def web(
-    query: str = typer.Argument(..., help="Search query"),
-    limit: int = typer.Option(None, help="Number of results to show"),
+# ── Main search (default command) ─────────────────────────────────
+
+@app.command(name="s")
+def search_cmd(
+    query: str = typer.Argument(..., help="Developer search query"),
+    source: str = typer.Option(None, "--source", help="Filter by source"),
+    lang: str = typer.Option(None, "--lang", help="Filter by language"),
+    limit: int = typer.Option(None, help="Result limit"),
     json_out: bool = typer.Option(False, "--json", help="Output JSON"),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable color output"),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable color"),
+    no_ai: bool = typer.Option(False, "--no-ai", help="Disable AI features"),
     open_idx: int = typer.Option(None, "--open", "-o", help="Open result N in browser"),
 ):
-    """General internet search with no dev-specific filtering."""
+    """Dev search (interactive). Example: dlens s 'python asyncio'"""
     if limit is None:
         limit = get_default_limit()
 
     with console.status("[dim]searching…[/]", spinner="dots"):
         try:
-            results, elapsed, _ = asyncio.run(
-                _do_search(query, web_mode=True))
+            results, elapsed, intent = asyncio.run(
+                _do_search(query, source=source or "", lang=lang or ""))
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
             raise typer.Exit(code=1)
 
     results = results[:limit]
-
     if not results:
         console.print("\n  [yellow]no results found[/]\n")
         raise typer.Exit()
@@ -89,6 +97,49 @@ def web(
     run_interactive(results, query, elapsed)
 
 
+# ── Web search ────────────────────────────────────────────────────
+
+@app.command()
+def web(
+    query: str = typer.Argument(..., help="Search query"),
+    limit: int = typer.Option(None, help="Number of results to show"),
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable color"),
+    open_idx: int = typer.Option(None, "--open", "-o", help="Open result N"),
+):
+    """General internet search with no dev-specific filtering."""
+    if limit is None:
+        limit = get_default_limit()
+
+    with console.status("[dim]searching…[/]", spinner="dots"):
+        try:
+            results, elapsed, _ = asyncio.run(
+                _do_search(query, web_mode=True))
+        except Exception as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            raise typer.Exit(code=1)
+
+    results = results[:limit]
+    if not results:
+        console.print("\n  [yellow]no results found[/]\n")
+        raise typer.Exit()
+
+    if json_out:
+        console.print(json.dumps(results, indent=2))
+        return
+
+    if open_idx is not None:
+        if 1 <= open_idx <= len(results):
+            open_url(results[open_idx - 1].get("url", ""))
+        else:
+            console.print(f"  [yellow]no result #{open_idx}[/]")
+        return
+
+    run_interactive(results, query, elapsed)
+
+
+# ── Error search ──────────────────────────────────────────────────
+
 @app.command()
 def error(
     message: str = typer.Argument(..., help="Error message to search"),
@@ -96,10 +147,10 @@ def error(
     lang: str = typer.Option(None, "--lang", help="Filter by language"),
     limit: int = typer.Option(None, help="Result limit"),
     json_out: bool = typer.Option(False, "--json", help="Output JSON"),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable color output"),
-    open_idx: int = typer.Option(None, "--open", "-o", help="Open result N in browser"),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable color"),
+    open_idx: int = typer.Option(None, "--open", "-o", help="Open result N"),
 ):
-    """Search for an error message, optimizing for StackOverflow and GitHub Issues."""
+    """Search for an error message, optimizing for StackOverflow and GitHub."""
     if limit is None:
         limit = get_default_limit()
     clean_query = parse_error(message)
@@ -114,7 +165,6 @@ def error(
             raise typer.Exit(code=1)
 
     results = results[:limit]
-
     if not results:
         console.print("\n  [yellow]no results found[/]\n")
         raise typer.Exit()
@@ -133,14 +183,16 @@ def error(
     run_interactive(results, final_query, elapsed)
 
 
+# ── Package search ────────────────────────────────────────────────
+
 @app.command()
 def pkg(
     name: str = typer.Argument(..., help="Package name"),
-    lang: str = typer.Option(None, "--lang", help="Language context for package"),
+    lang: str = typer.Option(None, "--lang", help="Language context"),
     limit: int = typer.Option(None, help="Result limit"),
     json_out: bool = typer.Option(False, "--json", help="Output JSON"),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable color output"),
-    open_idx: int = typer.Option(None, "--open", "-o", help="Open result N in browser"),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable color"),
+    open_idx: int = typer.Option(None, "--open", "-o", help="Open result N"),
 ):
     """Look up a package by name."""
     if limit is None:
@@ -156,7 +208,6 @@ def pkg(
             raise typer.Exit(code=1)
 
     results = results[:limit]
-
     if not results:
         console.print("\n  [yellow]no results found[/]\n")
         raise typer.Exit()
@@ -175,18 +226,110 @@ def pkg(
     run_interactive(results, query, elapsed)
 
 
+# ── Shortcut commands ─────────────────────────────────────────────
+
+@app.command()
+def save(
+    command: str = typer.Argument(..., help="The command to save"),
+    tag: str = typer.Argument(..., help="Memorable label"),
+    category: str = typer.Option("general", "--cat", "-c", help="Category"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing tag"),
+):
+    """Save a command shortcut. Usage: dlens save '<command>' '<tag>' [--cat <category>]"""
+    from .shortcuts.store import save_shortcut
+
+    try:
+        s = save_shortcut(command, tag, category, force=force)
+        console.print(f"\n  [green]saved![/] [bold]{s.tag}[/]  [dim]id: {s.id}[/]\n")
+    except ValueError as e:
+        console.print(f"\n  [yellow]{e}[/]\n")
+
+
+@app.command()
+def look(
+    query: str = typer.Argument(..., help="Fuzzy search your shortcuts"),
+    limit: int = typer.Option(5, "--limit", "-n"),
+):
+    """Fuzzy search saved shortcuts."""
+    from .shortcuts.search import fuzzy_find
+    from .shortcuts.interactive import run_interactive as shortcuts_interactive
+
+    matches = fuzzy_find(query, limit=limit)
+    if not matches:
+        console.print(f"\n  [yellow]no shortcuts matching '{query}'[/]\n")
+        return
+
+    shortcuts_interactive(matches)
+
+
+@app.command(name="shortcuts")
+def list_shortcuts(
+    cat: str = typer.Option(None, "--cat", "-c", help="Filter by category"),
+    recent: bool = typer.Option(False, "--recent", "-r", help="Sort by last used"),
+    top: bool = typer.Option(False, "--top", "-t", help="Sort by use count"),
+):
+    """List all saved shortcuts."""
+    from .shortcuts.render import render_all, render_match, console as sc_console
+    from .shortcuts.search import find_by_category
+
+    if cat:
+        items = find_by_category(cat)
+        if not items:
+            console.print(f"\n  [yellow]no shortcuts in category '{cat}'[/]\n")
+            return
+        sc_console.print()
+        for i, s in enumerate(items, 1):
+            render_match(s, 100, i)
+        return
+
+    sort = "recent" if recent else "top" if top else "category"
+    render_all(sort=sort)
+
+
+@app.command()
+def rm(
+    query: str = typer.Argument(None, help="Fuzzy tag to delete"),
+    cat: str = typer.Option(None, "--cat", help="Delete entire category"),
+    all_: bool = typer.Option(False, "--all", help="Delete all shortcuts"),
+):
+    """Delete a shortcut or group of shortcuts."""
+    from .shortcuts.store import delete_shortcut, delete_by_category, delete_all
+
+    if all_:
+        confirm = console.input("  [bold red]delete ALL shortcuts?[/] (y/N) ")
+        if confirm.strip().lower() == "y":
+            delete_all()
+            console.print("  [red]all shortcuts deleted[/]")
+        return
+
+    if cat:
+        confirm = console.input(f"  delete all [bold]{cat}[/] shortcuts? (y/N) ")
+        if confirm.strip().lower() == "y":
+            count = delete_by_category(cat)
+            console.print(f"  [red]deleted {count} {cat} shortcuts[/]")
+        return
+
+    if query:
+        from .shortcuts.search import fuzzy_find
+        matches = fuzzy_find(query, limit=3)
+        if not matches:
+            console.print(f"\n  [yellow]no match for '{query}'[/]\n")
+            return
+        shortcut, score = matches[0]
+        confirm = console.input(f"  delete [bold]{shortcut.tag}[/]? (y/N) ")
+        if confirm.strip().lower() == "y":
+            delete_shortcut(shortcut.id)
+            console.print("  [red]deleted[/]")
+    else:
+        console.print("  [yellow]provide a tag to delete, --cat, or --all[/]")
+
+
+# ── Version + pipe handler ────────────────────────────────────────
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    query: Optional[str] = typer.Argument(None, help="Developer search query"),
-    source: str = typer.Option(None, "--source", help="Filter by source (docs, github, stackoverflow)"),
-    lang: str = typer.Option(None, "--lang", help="Filter by language"),
-    limit: int = typer.Option(None, help="Result limit"),
-    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable color output"),
-    no_ai: bool = typer.Option(False, "--no-ai", help="Disable AI features"),
-    open_idx: int = typer.Option(None, "--open", "-o", help="Open result N in browser directly"),
-    version: bool = typer.Option(False, "--version", help="Print version and exit"),
+    version: bool = typer.Option(False, "--version", help="Print version"),
 ):
     """devLens - Privacy-first search engine for developers"""
     if version:
@@ -196,68 +339,26 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    if limit is None:
-        limit = get_default_limit()
-
-    # ── Piped input → error mode, non-interactive
+    # Handle piped input
     if is_piped() and not sys.stdin.closed:
         piped_data = read_stdin()
         if piped_data.strip():
             clean_query = parse_error(piped_data)
-            pipeline_query = f"{clean_query} error {lang if lang else ''}".strip()
+            pipeline_query = f"{clean_query} error".strip()
             with console.status("[dim]searching…[/]", spinner="dots"):
                 try:
                     results, elapsed, intent = asyncio.run(
-                        _do_search(pipeline_query, source=source or "", lang=lang or ""))
+                        _do_search(pipeline_query))
                 except Exception as e:
                     console.print(f"[bold red]Error:[/bold red] {e}")
                     raise typer.Exit(code=1)
 
-            results = results[:limit]
-            if not no_ai and results:
+            if results:
                 with console.status("[dim]generating answer…[/]", spinner="dots"):
                     answer = asyncio.run(generate_answer(pipeline_query, results, intent))
                 console.print(Panel(answer, title="🔍 devLens Answer",
                                     border_style="cyan", padding=(1, 2)))
-            else:
-                render_results(results, pipeline_query, elapsed)
             return
-
-    if not query:
-        if not is_piped():
-            console.print(ctx.get_help())
-        return
-
-    # ── Main search
-    with console.status("[dim]searching…[/]", spinner="dots"):
-        try:
-            results, elapsed, intent = asyncio.run(
-                _do_search(query, source=source or "", lang=lang or ""))
-        except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
-            raise typer.Exit(code=1)
-
-    results = results[:limit]
-
-    if not results:
-        console.print("\n  [yellow]no results found[/]\n")
-        raise typer.Exit()
-
-    # JSON output
-    if json_out:
-        console.print(json.dumps(results, indent=2))
-        return
-
-    # Direct open
-    if open_idx is not None:
-        if 1 <= open_idx <= len(results):
-            open_url(results[open_idx - 1].get("url", ""))
-        else:
-            console.print(f"  [yellow]no result #{open_idx}[/]")
-        return
-
-    # Interactive mode (default)
-    run_interactive(results, query, elapsed)
 
 
 if __name__ == "__main__":
