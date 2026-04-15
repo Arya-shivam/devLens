@@ -1,21 +1,29 @@
+"""
+devLens — shortcut interactive REPL (themed).
+"""
+
 import subprocess
 from .store import Shortcut, record_use, delete_shortcut, update_shortcut
-from .render import render_results, console
+from .render import render_results
+from ..render import (
+    console, prompt_input, render_success, render_warning,
+    render_info, render_bye,
+)
 
 
 def run_interactive(matches: list[tuple[Shortcut, int]]):
     """Interactive REPL after fuzzy search results."""
     if not matches:
-        console.print("\n  [yellow]no matches found[/]\n")
+        render_warning("no matches found")
         return
 
     render_results(matches)
 
     while True:
         try:
-            raw = console.input("\n  [bold]>[/] ").strip()
+            raw = prompt_input().strip()
         except (KeyboardInterrupt, EOFError):
-            console.print()
+            render_bye()
             break
 
         cmd = raw.lower()
@@ -33,20 +41,21 @@ def run_interactive(matches: list[tuple[Shortcut, int]]):
                     pyperclip.copy(shortcut.command)
                     record_use(shortcut.id)
                     cmd_preview = shortcut.command[:60]
-                    console.print(f"  [green]copied![/] [dim]{cmd_preview}[/]")
+                    render_success(f"copied!  {cmd_preview}")
                 except ImportError:
-                    console.print(f"  [cyan]{shortcut.command}[/]")
-                    console.print("  [dim](copy manually — pyperclip not available)[/]")
+                    render_info(shortcut.command)
+                    render_info("(copy manually — pyperclip not available)")
                 except Exception:
-                    console.print(f"  [cyan]{shortcut.command}[/]")
-                    console.print("  [dim](clipboard not available — copy manually)[/]")
+                    render_info(shortcut.command)
+                    render_info("(clipboard not available — copy manually)")
 
         # Run: "r" or "r 2"
         elif cmd.startswith("r"):
             result = _pick(cmd, "r", matches)
             if result:
                 shortcut, _ = result
-                console.print(f"  [dim]running:[/] [cyan]{shortcut.command}[/]\n")
+                render_info(f"running: {shortcut.command}")
+                console.print()
                 record_use(shortcut.id)
                 subprocess.run(shortcut.command, shell=True)
 
@@ -55,7 +64,7 @@ def run_interactive(matches: list[tuple[Shortcut, int]]):
             result = _pick(cmd, "e", matches)
             if result:
                 shortcut, _ = result
-                console.print(f"  current: [cyan]{shortcut.command}[/]")
+                render_info(f"current: {shortcut.command}")
                 new_cmd = console.input("  new command (enter to keep): ").strip()
                 new_tag = console.input("  new tag (enter to keep): ").strip()
                 update_shortcut(
@@ -63,7 +72,7 @@ def run_interactive(matches: list[tuple[Shortcut, int]]):
                     command=new_cmd or None,
                     tag=new_tag or None,
                 )
-                console.print("  [green]updated![/]")
+                render_success("updated!")
 
         # Delete: "d" or "d 2"
         elif cmd.startswith("d"):
@@ -75,12 +84,12 @@ def run_interactive(matches: list[tuple[Shortcut, int]]):
                 )
                 if confirm.strip().lower() == "y":
                     delete_shortcut(shortcut.id)
-                    console.print("  [red]deleted[/]")
+                    render_warning("deleted")
                     break
 
         else:
-            console.print(
-                "  [yellow]commands: c copy · r run · e edit · d delete · q quit[/]"
+            render_warning(
+                "commands: c copy · r run · e edit · d delete · q quit"
             )
 
 
@@ -94,5 +103,5 @@ def _pick(raw: str, prefix: str,
         idx = int(parts) - 1
         if 0 <= idx < len(matches):
             return matches[idx]
-    console.print("  [yellow]usage: <command> <number>[/]")
+    render_warning("usage: <command> <number>")
     return None

@@ -1,0 +1,55 @@
+name: Build and Release Binaries
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        pip install -e .
+
+    - name: Create entrypoint script
+      run: |
+        echo "from devlens.cli import app" > bin.py
+        echo "if __name__ == '__main__':" >> bin.py
+        echo "    app()" >> bin.py
+
+    - name: Build with PyInstaller
+      run: pyinstaller --onefile --name devlens bin.py
+
+    - name: Rename binaries based on OS
+      shell: bash
+      run: |
+        cd dist
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          mv devlens.exe devlens-windows-amd64.exe
+        elif [ "$RUNNER_OS" == "macOS" ]; then
+          mv devlens devlens-darwin-amd64
+        else
+          mv devlens devlens-linux-amd64
+        fi
+
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

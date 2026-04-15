@@ -1,13 +1,22 @@
+"""
+devLens — interactive REPL for search results.
+"""
+
 import asyncio
 import time
 from typing import List, Dict, Any
 
 from .browser import open_url
-from .render import console, render_results, render_prompt
+from .render import (
+    console, render_results, render_prompt, prompt_input,
+    render_spinner_status, render_bye, render_info, render_warning,
+)
 from .search import SearchClient
 from .ranker import rank_and_filter
 from .ai import summarize_results
+from .theme import THEME
 from rich.panel import Panel
+from rich.text import Text
 
 
 def run_interactive(results: List[Dict[str, Any]], query: str, elapsed: float):
@@ -17,9 +26,9 @@ def run_interactive(results: List[Dict[str, Any]], query: str, elapsed: float):
 
     while True:
         try:
-            raw = console.input("\n  [bold]>[/] ").strip()
+            raw = prompt_input().strip()
         except (KeyboardInterrupt, EOFError):
-            console.print("\n  [dim]bye[/]\n")
+            render_bye()
             break
 
         cmd = raw.lower()
@@ -28,30 +37,39 @@ def run_interactive(results: List[Dict[str, Any]], query: str, elapsed: float):
             break
 
         # Open a result: "o 2", "o2", or just "2"
-        elif cmd.startswith("o ") or cmd.startswith("o") and cmd[1:].isdigit() or cmd.isdigit():
+        elif (cmd.startswith("o ") or
+              (cmd.startswith("o") and cmd[1:].isdigit()) or
+              cmd.isdigit()):
             token = cmd.removeprefix("o").strip()
             if token.isdigit():
                 idx = int(token)
-                match = next((r for r in results if results.index(r) + 1 == idx), None)
+                match = next(
+                    (r for r in results if results.index(r) + 1 == idx),
+                    None,
+                )
                 if match:
                     url = match.get("url", "")
                     open_url(url)
-                    console.print(f"  [dim]→ opening {url}[/]")
+                    render_info(f"→ opening {url}")
                 else:
-                    console.print(f"  [yellow]no result #{idx}[/]")
+                    render_warning(f"no result #{idx}")
             else:
-                console.print("  [yellow]usage: o <number> or just type a number[/]")
+                render_warning("usage: o <number> or just type a number")
 
         # Summarize
         elif cmd == "s":
             console.print()
-            with console.status("[dim]summarizing…[/]", spinner="dots"):
+            with render_spinner_status("summarizing..."):
                 summary = asyncio.run(summarize_results(query, results))
+
+            summary_text = Text(summary, style="dim italic")
             console.print(Panel(
-                summary,
-                title="🤖 AI Summary",
-                border_style="green",
+                summary_text,
+                title="[bold bright_white]AI Summary[/]",
+                border_style=THEME["accent"],
                 padding=(1, 2),
+                expand=False,
+                width=min(THEME["max_width"] - 2, 78),
             ))
             render_prompt()
 
@@ -60,12 +78,14 @@ def run_interactive(results: List[Dict[str, Any]], query: str, elapsed: float):
             new_query = raw[1:].strip()
             if new_query:
                 client = SearchClient()
-                with console.status("[dim]searching…[/]", spinner="dots"):
+                with render_spinner_status("searching..."):
                     start = time.monotonic()
                     try:
-                        raw_results = asyncio.run(client.search(query=new_query))
+                        raw_results = asyncio.run(
+                            client.search(query=new_query)
+                        )
                     except Exception as e:
-                        console.print(f"  [bold red]Error:[/bold red] {e}")
+                        render_warning(f"Error: {e}")
                         continue
                     new_elapsed = time.monotonic() - start
 
@@ -76,17 +96,17 @@ def run_interactive(results: List[Dict[str, Any]], query: str, elapsed: float):
                     render_results(results, query, new_elapsed)
                     render_prompt()
                 else:
-                    console.print("  [yellow]no results found[/]")
+                    render_warning("no results found")
             else:
-                console.print("  [yellow]usage: / <new query>[/]")
+                render_warning("usage: / <new query>")
 
         # Next page (placeholder)
         elif cmd == "n":
-            console.print("  [dim]next page — coming soon[/]")
+            render_info("next page — coming soon")
 
         # Previous page (placeholder)
         elif cmd == "p":
-            console.print("  [dim]prev page — coming soon[/]")
+            render_info("prev page — coming soon")
 
         else:
-            console.print("  [yellow]unknown command. try: o <n> · s · / <query> · q[/]")
+            render_warning("unknown command. try: o <n> · s · / <query> · q")

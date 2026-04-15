@@ -3,8 +3,8 @@ import json
 import asyncio
 import time
 import typer
-from rich.console import Console
 from rich.panel import Panel
+from rich.text import Text
 from typing import Optional
 import importlib.metadata
 
@@ -14,15 +14,19 @@ from .error import is_piped, read_stdin, parse_error
 from .ai import summarize_results, classify_query, generate_answer
 from .pkg import format_package_query
 from .config import get_default_limit
-from .render import render_results, render_prompt
+from .render import (
+    console, render_results, render_prompt, render_spinner_status,
+    render_error_unreachable, render_no_results, render_banner,
+)
 from .interactive import run_interactive
 from .browser import open_url
+from .theme import THEME
 
 app = typer.Typer(
     help="devLens - Privacy-first search engine for developers",
-    no_args_is_help=True,
+    no_args_is_help=False,
+    invoke_without_command=True,
 )
-console = Console()
 
 
 def get_version():
@@ -70,17 +74,17 @@ def search_cmd(
     if limit is None:
         limit = get_default_limit()
 
-    with console.status("[dim]searching…[/]", spinner="dots"):
+    with render_spinner_status("searching docs..."):
         try:
             results, elapsed, intent = asyncio.run(
                 _do_search(query, source=source or "", lang=lang or ""))
         except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
+            render_error_unreachable(e)
             raise typer.Exit(code=1)
 
     results = results[:limit]
     if not results:
-        console.print("\n  [yellow]no results found[/]\n")
+        render_no_results(query)
         raise typer.Exit()
 
     if json_out:
@@ -111,17 +115,17 @@ def web(
     if limit is None:
         limit = get_default_limit()
 
-    with console.status("[dim]searching…[/]", spinner="dots"):
+    with render_spinner_status("searching..."):
         try:
             results, elapsed, _ = asyncio.run(
                 _do_search(query, web_mode=True))
         except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
+            render_error_unreachable(e)
             raise typer.Exit(code=1)
 
     results = results[:limit]
     if not results:
-        console.print("\n  [yellow]no results found[/]\n")
+        render_no_results(query)
         raise typer.Exit()
 
     if json_out:
@@ -156,17 +160,17 @@ def error(
     clean_query = parse_error(message)
     final_query = f"{clean_query} error {lang if lang else ''}".strip()
 
-    with console.status("[dim]searching…[/]", spinner="dots"):
+    with render_spinner_status("searching docs..."):
         try:
             results, elapsed, _ = asyncio.run(
                 _do_search(final_query, source=source or "", lang=lang or ""))
         except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
+            render_error_unreachable(e)
             raise typer.Exit(code=1)
 
     results = results[:limit]
     if not results:
-        console.print("\n  [yellow]no results found[/]\n")
+        render_no_results(final_query)
         raise typer.Exit()
 
     if json_out:
@@ -199,17 +203,17 @@ def pkg(
         limit = get_default_limit()
     query = format_package_query(name, lang)
 
-    with console.status("[dim]searching…[/]", spinner="dots"):
+    with render_spinner_status("searching packages..."):
         try:
             results, elapsed, _ = asyncio.run(
                 _do_search(query, lang=lang or ""))
         except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
+            render_error_unreachable(e)
             raise typer.Exit(code=1)
 
     results = results[:limit]
     if not results:
-        console.print("\n  [yellow]no results found[/]\n")
+        render_no_results(query)
         raise typer.Exit()
 
     if json_out:
@@ -238,11 +242,17 @@ def save(
     """Save a command shortcut. Usage: dlens save '<command>' '<tag>' [--cat <category>]"""
     from .shortcuts.store import save_shortcut
 
+    from .render import render_success, render_warning
     try:
         s = save_shortcut(command, tag, category, force=force)
-        console.print(f"\n  [green]saved![/] [bold]{s.tag}[/]  [dim]id: {s.id}[/]\n")
+        console.print()
+        render_success(f"saved! {s.tag}")
+        console.print(f"  [dim]id: {s.id}[/]")
+        console.print()
     except ValueError as e:
-        console.print(f"\n  [yellow]{e}[/]\n")
+        console.print()
+        render_warning(str(e))
+        console.print()
 
 
 @app.command()
@@ -254,9 +264,10 @@ def look(
     from .shortcuts.search import fuzzy_find
     from .shortcuts.interactive import run_interactive as shortcuts_interactive
 
+    from .render import render_warning
     matches = fuzzy_find(query, limit=limit)
     if not matches:
-        console.print(f"\n  [yellow]no shortcuts matching '{query}'[/]\n")
+        render_no_results(query)
         return
 
     shortcuts_interactive(matches)
@@ -269,15 +280,15 @@ def list_shortcuts(
     top: bool = typer.Option(False, "--top", "-t", help="Sort by use count"),
 ):
     """List all saved shortcuts."""
-    from .shortcuts.render import render_all, render_match, console as sc_console
+    from .shortcuts.render import render_all, render_match
     from .shortcuts.search import find_by_category
 
     if cat:
         items = find_by_category(cat)
         if not items:
-            console.print(f"\n  [yellow]no shortcuts in category '{cat}'[/]\n")
+            render_no_results(cat)
             return
-        sc_console.print()
+        console.print()
         for i, s in enumerate(items, 1):
             render_match(s, 100, i)
         return
@@ -333,11 +344,22 @@ def main(
 ):
     """devLens - Privacy-first search engine for developers"""
     if version:
-        console.print(f"devLens {get_version()}")
+        render_banner()
         raise typer.Exit()
 
     if ctx.invoked_subcommand is not None:
         return
+
+    # No subcommand → show banner + usage hints
+    if not (is_piped() and not sys.stdin.closed):
+        render_banner()
+        console.print(
+            f"  [bold]usage:[/]  dlens s '<query>'    [dim]dev search[/]\n"
+            f"          dlens web '<query>'  [dim]general search[/]\n"
+            f"          dlens look '<tag>'   [dim]find a shortcut[/]\n"
+            f"          dlens --help         [dim]all commands[/]\n"
+        )
+        raise typer.Exit(0)
 
     # Handle piped input
     if is_piped() and not sys.stdin.closed:
@@ -345,19 +367,25 @@ def main(
         if piped_data.strip():
             clean_query = parse_error(piped_data)
             pipeline_query = f"{clean_query} error".strip()
-            with console.status("[dim]searching…[/]", spinner="dots"):
+            with render_spinner_status("searching docs..."):
                 try:
                     results, elapsed, intent = asyncio.run(
                         _do_search(pipeline_query))
                 except Exception as e:
-                    console.print(f"[bold red]Error:[/bold red] {e}")
+                    render_error_unreachable(e)
                     raise typer.Exit(code=1)
 
             if results:
-                with console.status("[dim]generating answer…[/]", spinner="dots"):
+                with render_spinner_status("generating answer..."):
                     answer = asyncio.run(generate_answer(pipeline_query, results, intent))
-                console.print(Panel(answer, title="🔍 devLens Answer",
-                                    border_style="cyan", padding=(1, 2)))
+                answer_text = Text(answer, style="dim italic")
+                console.print(Panel(
+                    answer_text,
+                    title="[bold bright_white]devLens Answer[/]",
+                    border_style=THEME["accent"],
+                    padding=(1, 2),
+                    expand=False,
+                ))
             return
 
 

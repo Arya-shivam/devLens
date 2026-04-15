@@ -1,0 +1,21 @@
+{
+  "name": "devlens",
+  "version": "0.2.0",
+  "description": "Privacy-first search engine for developers",
+  "main": "wrapper.js",
+  "bin": {
+    "dlens": "wrapper.js",
+    "devlens": "wrapper.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "keywords": [
+    "search",
+    "cli",
+    "developer",
+    "productivity"
+  ],
+  "author": "Arya-shivam",
+  "license": "MIT"
+}
