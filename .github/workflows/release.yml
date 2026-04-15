@@ -4,6 +4,9 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
@@ -27,13 +30,16 @@ jobs:
         pip install -e .
 
     - name: Create entrypoint script
+      shell: bash
       run: |
-        echo "from devlens.cli import app" > bin.py
-        echo "if __name__ == '__main__':" >> bin.py
-        echo "    app()" >> bin.py
+        cat <<EOF > bin.py
+        from devlens.cli import app
+        if __name__ == '__main__':
+            app()
+        EOF
 
     - name: Build with PyInstaller
-      run: pyinstaller --onefile --name devlens bin.py
+      run: python -m PyInstaller --onefile --name devlens bin.py
 
     - name: Rename binaries based on OS
       shell: bash
